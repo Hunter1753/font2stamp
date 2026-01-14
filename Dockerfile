@@ -1,4 +1,4 @@
-FROM python:3.9-slim-bullseye
+FROM mcr.microsoft.com/devcontainers/python:3
 
 # 1. Install System Dependencies
 RUN apt-get update && apt-get install -y \
