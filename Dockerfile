@@ -29,7 +29,7 @@ echo "--- Rebuilding Font Cache ---"\n\
 fc-cache -f -v\n\
 \n\
 echo "--- Running Stamp Generator ---"\n\
-xvfb-run -a python3 font_to_stamps.py\n\
+xvfb-run -a python3 font_to_stl.py\n\
 \n\
 echo "--- Done! Exiting container. ---"\n\
 ' > /usr/local/bin/entrypoint.sh

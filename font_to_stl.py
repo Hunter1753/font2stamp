@@ -7,14 +7,14 @@ from fontTools.ttLib import TTFont
 # ================= CONFIGURATION =================
 
 # Stamp Dimensions (in mm)
-FONT_SIZE_MM = 20     
-BASE_HEIGHT = 20      
-RELIEF_HEIGHT = 2     
-BLOCK_DEPTH = 25      
-SIDE_PADDING = 2      
+FONT_SIZE_MM = 5     # The visual size of the letter on the stamp
+BASE_HEIGHT = 2     # The height of the handle/block (Z-axis base)
+RELIEF_HEIGHT = 2    # How far the letter sticks out (Z-axis relief)
+BLOCK_DEPTH = 9     # The "depth" of the stamp (Y-axis, top to bottom)
+SIDE_PADDING = 1     # Extra space on left/right of the letter
 
 OUTPUT_DIR = "stl_output"
-CHARS_TO_GENERATE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,!?"
+CHARS_TO_GENERATE = "AÄBCDEFGHIJKLMNOÖPQRSTUÜVWXYZaäbcdefghijklmnoöpqrsßtuüvwxyz0123456789.:,;!?&/-"
 
 # OpenSCAD Path (default "openscad" assumes it's in PATH)
 OPENSCAD_EXEC = "openscad" 
@@ -80,8 +80,8 @@ def generate_scad_string(char, block_width, family, style):
     baseline_offset = -FONT_SIZE_MM * 0.3
     
     # Escape quote marks in case font name has them
-    family_safe = family.replace('"', '\\"')
-    style_safe = style.replace('"', '\\"')
+    family_safe = family.replace('"', '\\"').replace('-', '\\\\-')
+    style_safe = style.replace('"', '\\"').replace('-', '\\\\-')
 
     scad_code = f"""
     $fn = 60;
@@ -94,7 +94,7 @@ def generate_scad_string(char, block_width, family, style):
             linear_extrude({RELIEF_HEIGHT})
                 text("{char}", 
                      size={FONT_SIZE_MM}, 
-                     font="{family_safe}:{style_safe}", 
+                     font="{family_safe}:style={style_safe}", 
                      halign="center", 
                      valign="baseline");
     }}
@@ -154,8 +154,8 @@ def main():
             print(f"Error: OpenSCAD failed on '{char}'.")
 
     # Cleanup
-    if os.path.exists(os.path.join(OUTPUT_DIR, "temp.scad")):
-        os.remove(os.path.join(OUTPUT_DIR, "temp.scad"))
+    #if os.path.exists(os.path.join(OUTPUT_DIR, "temp.scad")):
+    #    os.remove(os.path.join(OUTPUT_DIR, "temp.scad"))
 
     print(f"\nSuccess! STLs are in '{OUTPUT_DIR}'")
 

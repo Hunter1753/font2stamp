@@ -209,3 +209,6 @@ __marimo__/
 # Fonts (for license reasons)
 *.otf
 *ttf
+
+# Rendered Output
+stl_output/
