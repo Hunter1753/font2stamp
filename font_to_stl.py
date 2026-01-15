@@ -2,6 +2,7 @@ import os
 import glob
 import subprocess
 from PIL import ImageFont
+from PIL import Image, ImageDraw
 from fontTools.ttLib import TTFont
 
 # ================= CONFIGURATION =================
@@ -10,11 +11,11 @@ from fontTools.ttLib import TTFont
 FONT_SIZE_MM = 5     # The visual size of the letter (EM square)
 BASE_HEIGHT = 2       # The height of the handle/block (Z-axis base)
 RELIEF_HEIGHT = 2     # How far the letter sticks out (Z-axis relief)
-SIDE_PADDING = 1      # Extra space on left/right of the letter
+SIDE_PADDING = 0      # Extra space on left/right of the letter
 
 # Margins for the Holder/Rails (Y-axis)
-MARGIN_TOP = 0
-MARGIN_BOTTOM = 0
+MARGIN_TOP = 4
+MARGIN_BOTTOM = 2
 
 # Initial Block Depth. Script will increase this if needed.
 MIN_BLOCK_DEPTH = 5  
@@ -51,7 +52,7 @@ def get_font_design_metrics(font_path):
     for its designated 'Ascent' and 'Descent'. This covers the tallest 
     possible character in the font.
     """
-    dummy_size = 100
+    dummy_size = 1000
     try:
         font = ImageFont.truetype(font_path, dummy_size)
     except OSError:
@@ -75,23 +76,21 @@ def get_font_design_metrics(font_path):
     
     return abs_ascent_mm, abs_descent_mm
 
-def get_char_width_mm(char, font_path):
-    """ Returns the physical width of a character in mm. """
-    dummy_size = 100
-    font = ImageFont.truetype(font_path, dummy_size)
-    length = font.getlength(char)
-    return (length / dummy_size) * FONT_SIZE_MM
-
-def generate_scad_string(char, block_width, block_depth, baseline_y_pos, family, style):
+def generate_scad_string(char, block_depth, baseline_y_pos, family, style):
     family_safe = family.replace('"', '\\"').replace('-', '\\\\-')
     style_safe = style.replace('"', '\\"').replace('-', '\\\\-')
 
     scad_code = f"""
     $fn = 60;
+    met = textmetrics(text="{char}", 
+                     size={FONT_SIZE_MM}, 
+                     font="{family_safe}:style={style_safe}", 
+                     halign="center", 
+                     valign="baseline");
     union() {{
         // Base Block
-        translate([- {block_width}/2, -{block_depth}/2, 0])
-            cube([{block_width}, {block_depth}, {BASE_HEIGHT}]);
+        translate([- (met.size.x + (2 * {SIDE_PADDING}))/2, -{block_depth}/2, 0])
+            cube([(met.size.x + (2 * {SIDE_PADDING})), {block_depth}, {BASE_HEIGHT}]);
             
         // Letter
         // baseline_y_pos is where the baseline sits relative to the CENTER (0,0)
@@ -116,7 +115,7 @@ def main():
     if not font_files:
         print("Error: No .ttf or .otf files found.")
         return
-    font_path = font_files[0]
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"#font_files[0]
     
     try:
         family_name, style_name = get_font_info(font_path)
@@ -157,17 +156,13 @@ def main():
     print(f"Generating stamps...")
 
     for char in CHARS_TO_GENERATE:
-        # Width calculation is still per-character to keep blocks compact horizontally
-        char_width = get_char_width_mm(char, font_path)
-        block_width = max(char_width + (SIDE_PADDING * 2), 5.0)
-
-        scad_content = generate_scad_string(char, block_width, final_block_depth, baseline_y_pos, family_name, style_name)
+        scad_content = generate_scad_string(char, final_block_depth, baseline_y_pos, family_name, style_name)
         
-        safe_char_name = "dot" if char == "." else "colon" if char == ":" else char
+        safe_char_name = char
         if not safe_char_name.isalnum(): safe_char_name = f"symbol_{ord(char)}"
         
         stl_filename = os.path.join(OUTPUT_DIR, f"{safe_char_name}.stl")
-        scad_filename = os.path.join(OUTPUT_DIR, "temp.scad")
+        scad_filename = os.path.join(OUTPUT_DIR, f"{safe_char_name}.scad")
         
         with open(scad_filename, "w") as f:
             f.write(scad_content)
@@ -176,7 +171,7 @@ def main():
         
         try:
             subprocess.run(
-                [OPENSCAD_EXEC, "-o", stl_filename, scad_filename],
+                [OPENSCAD_EXEC, "--enable", "textmetrics", "-o", stl_filename, scad_filename],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL

@@ -1,23 +1,16 @@
-FROM mcr.microsoft.com/devcontainers/python:3
+FROM docker.io/openscad/openscad:dev
 
 # 1. Install System Dependencies
 RUN apt-get update && apt-get install -y \
-    openscad \
+    python3 \
+    python3-pillow \
+    python3-fonttools \
     fontconfig \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Install Python Dependencies
-# Added 'fonttools' to read font metadata
-RUN pip install Pillow fonttools
-
-# 3. Set up working directory
 WORKDIR /app
 
-# 4. Entrypoint Script
-# - Copies fonts to system folder
-# - Updates cache
-# - Runs script
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
