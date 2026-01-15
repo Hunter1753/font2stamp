@@ -151,6 +151,7 @@ def main():
         
         safe_char_name = char
         if not safe_char_name.isalnum(): safe_char_name = f"symbol_{ord(char)}"
+        if safe_char_name.isupper(): safe_char_name = f"upper_{char.lower()}"
         
         stl_filename = os.path.join(OUTPUT_DIR, f"{safe_char_name}.stl")
         scad_filename = os.path.join(OUTPUT_DIR, "temp.scad") # set this to f"{safe_char_name}.scad" to view generated scad code
