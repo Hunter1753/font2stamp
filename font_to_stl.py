@@ -7,25 +7,22 @@ from fontTools.ttLib import TTFont
 # ================= CONFIGURATION =================
 
 # Stamp Dimensions (in mm)
-FONT_SIZE_MM = 5     # The visual size of the letter
-BASE_DEPTH = 2      # The height of the handle/block (Z-axis base)
-RELIEF_DEPTH = 2    # How far the letter sticks out (Z-axis relief)
-SIDE_PADDING = 1     # Extra space on left/right of the letter
+FONT_SIZE_MM = 5     # The visual size of the letter (EM square)
+BASE_HEIGHT = 2       # The height of the handle/block (Z-axis base)
+RELIEF_HEIGHT = 2     # How far the letter sticks out (Z-axis relief)
+SIDE_PADDING = 1      # Extra space on left/right of the letter
 
 # Margins for the Holder/Rails (Y-axis)
-# These create empty space at top and bottom for sliding into a rail
-MARGIN_TOP = 1.5
-MARGIN_BOTTOM = 1.5
+MARGIN_TOP = 0
+MARGIN_BOTTOM = 0
 
-# Initial Block height (Y-axis). 
-# The script will INCREASE this automatically if the letters + margins don't fit.
-MIN_BLOCK_HEIGHT = 5
+# Initial Block Depth. Script will increase this if needed.
+MIN_BLOCK_DEPTH = 5  
 
 OUTPUT_DIR = "stl_output"
 CHARS_TO_GENERATE = "AÄBCDEFGHIJKLMNOÖPQRSTUÜVWXYZaäbcdefghijklmnoöpqrsßtuüvwxyz0123456789.:,;!?&/-"
 
-# OpenSCAD Path
-OPENSCAD_EXEC = "openscad" 
+OPENSCAD_EXEC = "openscad"
 
 # =================================================
 
@@ -48,11 +45,11 @@ def get_font_info(font_path):
                 
     return family, style
 
-def get_vertical_metrics(chars, font_path):
+def get_font_design_metrics(font_path):
     """
-    Scans ALL characters to find the maximum Ascent (height above baseline)
-    and Descent (depth below baseline). 
-    Returns: (max_ascent_mm, max_descent_mm)
+    Instead of scanning pixels (which can miss accents), we ask the font
+    for its designated 'Ascent' and 'Descent'. This covers the tallest 
+    possible character in the font.
     """
     dummy_size = 100
     try:
@@ -61,57 +58,48 @@ def get_vertical_metrics(chars, font_path):
         print(f"Error: PIL could not load font file: {font_path}")
         return 0, 0
 
-    max_asc_px = 0
-    max_desc_px = 0
+    # getmetrics returns (ascent, descent) in pixels for the entire font
+    # ascent is distance from baseline to top-most ink
+    # descent is distance from baseline to bottom-most ink
+    #ascent_px, descent_px = font.getmetrics()
 
-    for char in chars:
-        # anchor='ls' means Left, Baseline. 
-        # bbox returns (left, top, right, bottom) relative to baseline.
-        # Top is usually negative (up), Bottom is positive (down).
-        try:
-            bbox = font.getbbox(char, anchor='ls')
-        except ValueError:
-            # Fallback for older Pillow versions
-            bbox = font.getbbox(char)
-        
-        # Calculate height above baseline (negative Y in bbox means up)
-        ascent = -bbox[1]
-        descent = bbox[3]
-
-        if ascent > max_asc_px: max_asc_px = ascent
-        if descent > max_desc_px: max_desc_px = descent
-
-    # Convert pixels to MM ratio
+    _, top, _, bottom = font.getbbox(CHARS_TO_GENERATE, anchor="ls")
+    
+    # Calculate scale factor
     scale_factor = FONT_SIZE_MM / dummy_size
-    return max_asc_px * scale_factor, max_desc_px * scale_factor
+    
+    # We add a small safety buffer (10%) because OpenSCAD and PIL 
+    # handle rounding slightly differently.
+    safety_buffer = 1#.10
+    
+    abs_ascent_mm = (-top * scale_factor) * safety_buffer
+    abs_descent_mm = (-bottom * scale_factor) * safety_buffer
+    
+    return abs_ascent_mm, abs_descent_mm
 
 def get_char_width_mm(char, font_path):
     """ Returns the physical width of a character in mm. """
     dummy_size = 100
     font = ImageFont.truetype(font_path, dummy_size)
-    length = font.getlength(char) # More accurate than bbox for width spacing
+    length = font.getlength(char)
     return (length / dummy_size) * FONT_SIZE_MM
 
-def generate_scad_string(char, block_width, block_depth, y_offset, family, style):
-    """
-    Generates OpenSCAD code.
-    y_offset: The Y position of the baseline relative to the center of the block.
-    """
+def generate_scad_string(char, block_width, block_depth, baseline_y_pos, family, style):
     family_safe = family.replace('"', '\\"').replace('-', '\\\\-')
     style_safe = style.replace('"', '\\"').replace('-', '\\\\-')
 
     scad_code = f"""
     $fn = 60;
     union() {{
-        // The Base Block
+        // Base Block
         translate([- {block_width}/2, -{block_depth}/2, 0])
-            cube([{block_width}, {block_depth}, {BASE_DEPTH}]);
+            cube([{block_width}, {block_depth}, {BASE_HEIGHT}]);
             
-        // The Letter
-        // We translate the baseline to the calculated y_offset
-        translate([0, {y_offset}, {BASE_DEPTH}])
-            mirror([1, 0, 0]) // Stamps must be mirrored
-            linear_extrude({RELIEF_DEPTH})
+        // Letter
+        // baseline_y_pos is where the baseline sits relative to the CENTER (0,0)
+        translate([0, {baseline_y_pos}, {BASE_HEIGHT}])
+            mirror([1, 0, 0]) 
+            linear_extrude({RELIEF_HEIGHT})
                 text("{char}", 
                      size={FONT_SIZE_MM}, 
                      font="{family_safe}:style={style_safe}", 
@@ -139,44 +127,44 @@ def main():
         print(f"Error reading font metadata: {e}")
         return
 
-    # 2. PRE-CALCULATION: Determine Metrics for the Holder
-    print("Analyzing font metrics to fit umlauts and margins...")
-    max_ascent, max_descent = get_vertical_metrics(CHARS_TO_GENERATE, font_path)
+    # 2. METRIC CALCULATION
+    # We use the font's Global Design Metrics now.
+    # This guarantees the block is tall enough for ANY character in the set.
+    design_ascent, design_descent = get_font_design_metrics(font_path)
     
-    print(f"  Max Ascent (e.g. Ä): {max_ascent:.2f}mm")
-    print(f"  Max Descent (e.g. g): {max_descent:.2f}mm")
+    print(f"Font Metrics (Design): Ascent={design_ascent:.2f}mm, Descent={design_descent:.2f}mm")
 
-    # Calculate required height for text only
-    text_height_needed = max_ascent + max_descent
+    # Height needed for the text itself
+    text_height_needed = design_ascent + design_descent
     
-    # Calculate total block heihgt needed
-    total_height_needed = text_height_needed + MARGIN_TOP + MARGIN_BOTTOM
+    # Total Block Height needed (Text + Top Margin + Bottom Margin)
+    total_depth_needed = text_height_needed + MARGIN_TOP + MARGIN_BOTTOM
     
-    # Determine final Block Height (use MIN unless we need more)
-    final_block_height = max(MIN_BLOCK_HEIGHT, total_height_needed)
+    # Set final depth
+    final_block_depth = max(MIN_BLOCK_DEPTH, total_depth_needed)
     
-    print(f"  Block Height set to: {final_block_height:.2f}mm (Margins: {MARGIN_TOP}mm top, {MARGIN_BOTTOM}mm bottom)")
+    print(f"Block Height calculated: {final_block_depth:.2f}mm")
 
     # 3. Calculate Baseline Position
-    # We want the text to sit in the 'printable area' between margins.
-    # To align 'A' and 'g' correctly, the baseline must be fixed relative to the block.
     # OpenSCAD Y=0 is the center of the block.
-    # Top of block = final_block_depth / 2
-    # Top of Tallest Letter = Top of block - MARGIN_TOP
-    # Baseline Position = (Top of Tallest Letter) - Max_Ascent
+    # The TOP edge of the block is at Y = final_block_depth / 2
+    # We want the highest point of the font (Ascent) to be 'MARGIN_TOP' away from the edge.
+    # So: Baseline_Y + Ascent = Top_Edge - Margin_Top
+    # Baseline_Y = (Top_Edge - Margin_Top) - Ascent
     
-    baseline_y_pos = (final_block_height / 2) - MARGIN_TOP - max_ascent
+    block_top_edge = final_block_depth / 2
+    baseline_y_pos = (block_top_edge - MARGIN_TOP) - design_ascent
 
+    print(f"Baseline Offset: {baseline_y_pos:.2f}mm (from center)")
     print(f"Generating stamps...")
 
     for char in CHARS_TO_GENERATE:
-        # Calculate width specific to this char
+        # Width calculation is still per-character to keep blocks compact horizontally
         char_width = get_char_width_mm(char, font_path)
         block_width = max(char_width + (SIDE_PADDING * 2), 5.0)
 
-        scad_content = generate_scad_string(char, block_width, final_block_height, baseline_y_pos, family_name, style_name)
+        scad_content = generate_scad_string(char, block_width, final_block_depth, baseline_y_pos, family_name, style_name)
         
-        # Clean filename
         safe_char_name = "dot" if char == "." else "colon" if char == ":" else char
         if not safe_char_name.isalnum(): safe_char_name = f"symbol_{ord(char)}"
         
@@ -186,7 +174,7 @@ def main():
         with open(scad_filename, "w") as f:
             f.write(scad_content)
 
-        print(f"  Rendering '{char}' -> Width: {block_width:.1f}mm")
+        print(f"  Rendering '{char}'")
         
         try:
             subprocess.run(
@@ -201,7 +189,7 @@ def main():
     if os.path.exists(os.path.join(OUTPUT_DIR, "temp.scad")):
         os.remove(os.path.join(OUTPUT_DIR, "temp.scad"))
 
-    print(f"\nSuccess! All stamps generated with height {final_block_height:.2f}mm.")
+    print(f"\nSuccess! All stamps generated.")
 
 if __name__ == "__main__":
     main()
