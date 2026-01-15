@@ -7,7 +7,7 @@ from fontTools.ttLib import TTFont
 
 # Stamp Dimensions (in mm)
 FONT_SIZE_MM = 5    # The visual size of the letter (EM square)
-BASE_HEIGHT = 1.5     # The height of the handle/block (Z-axis base)
+BASE_HEIGHT = 2     # The height of the handle/block (Z-axis base)
 RELIEF_HEIGHT = 2   # How far the letter sticks out (Z-axis relief)
 
 RIGHT_SAFETY = 0.5    # Extra space on the right (mirrored because of stamp) as a safety margin for misbehaving fonts
@@ -98,7 +98,7 @@ def generate_handle_scad(family, style):
     tol = {HANDLE_TOLERANCE};
     wall = {HANDLE_WALL};
     lip = {HANDLE_LIP};
-    lip_thick = 1;
+    lip_thick = {RELIEF_HEIGHT}/2;
     base_thick = {HANDLE_BASE_THICKNESS};
     stamp_base_z = {BASE_HEIGHT};
     slide_relief = base_thick/8;
