@@ -3,7 +3,6 @@ FROM docker.io/openscad/openscad:dev
 # 1. Install System Dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
-    python3-pillow \
     python3-fonttools \
     fontconfig \
     xvfb \

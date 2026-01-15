@@ -1,24 +1,31 @@
 import os
 import glob
 import subprocess
-from PIL import ImageFont
-from PIL import Image, ImageDraw
 from fontTools.ttLib import TTFont
 
 # ================= CONFIGURATION =================
 
 # Stamp Dimensions (in mm)
-FONT_SIZE_MM = 5     # The visual size of the letter (EM square)
-BASE_HEIGHT = 2       # The height of the handle/block (Z-axis base)
-RELIEF_HEIGHT = 2     # How far the letter sticks out (Z-axis relief)
-SIDE_PADDING = 0      # Extra space on left/right of the letter
+FONT_SIZE_MM = 5    # The visual size of the letter (EM square)
+BASE_HEIGHT = 1.5     # The height of the handle/block (Z-axis base)
+RELIEF_HEIGHT = 2   # How far the letter sticks out (Z-axis relief)
+
+RIGHT_SAFETY = 0.5    # Extra space on the right (mirrored because of stamp) as a safety margin for misbehaving fonts
+LEFT_SAFETY = 0.5    # Extra space on the left (mirrored because of stamp) as a safety margin for misbehaving fonts
+TOP_SAFETY = 2      # Extra space on top as a safety margin for misbehaving fonts
+                    # use this if your umlauts of e.g. Ä are invading your margin
 
 # Margins for the Holder/Rails (Y-axis)
-MARGIN_TOP = 4
+MARGIN_TOP = 2
 MARGIN_BOTTOM = 2
 
-# Initial Block Depth. Script will increase this if needed.
-MIN_BLOCK_DEPTH = 5  
+# --- Handle / Rail Configuration ---
+GENERATE_HANDLE = True
+HANDLE_LENGTH = 80        # Length of the handle in mm
+HANDLE_WALL = 2.0         # Thickness of the handle walls
+HANDLE_LIP = 1            # How far the rail overlaps the stamp (must be < MARGINS!)
+HANDLE_TOLERANCE = 0.3    # Extra gap for smooth sliding
+HANDLE_BASE_THICKNESS = 3 # Thickness of the handle body behind the stamps
 
 OUTPUT_DIR = "stl_output"
 CHARS_TO_GENERATE = "AÄBCDEFGHIJKLMNOÖPQRSTUÜVWXYZaäbcdefghijklmnoöpqrsßtuüvwxyz0123456789.:,;!?&/-"
@@ -46,37 +53,7 @@ def get_font_info(font_path):
                 
     return family, style
 
-def get_font_design_metrics(font_path):
-    """
-    Instead of scanning pixels (which can miss accents), we ask the font
-    for its designated 'Ascent' and 'Descent'. This covers the tallest 
-    possible character in the font.
-    """
-    dummy_size = 1000
-    try:
-        font = ImageFont.truetype(font_path, dummy_size)
-    except OSError:
-        print(f"Error: PIL could not load font file: {font_path}")
-        return 0, 0
-
-    # getmetrics returns (ascent, descent) in pixels for the entire font
-    # ascent is distance from baseline to top-most ink
-    # descent is distance from baseline to bottom-most ink
-    ascent_px, descent_px = font.getmetrics()
-    
-    # Calculate scale factor
-    scale_factor = FONT_SIZE_MM / dummy_size
-    
-    # We add a small safety buffer (10%) because OpenSCAD and PIL 
-    # handle rounding slightly differently.
-    safety_buffer = 1.10
-    
-    abs_ascent_mm = (ascent_px * scale_factor) * safety_buffer
-    abs_descent_mm = (descent_px * scale_factor) * safety_buffer
-    
-    return abs_ascent_mm, abs_descent_mm
-
-def generate_scad_string(char, block_depth, baseline_y_pos, family, style):
+def generate_scad_string(char, family, style):
     family_safe = family.replace('"', '\\"').replace('-', '\\\\-')
     style_safe = style.replace('"', '\\"').replace('-', '\\\\-')
 
@@ -87,14 +64,14 @@ def generate_scad_string(char, block_depth, baseline_y_pos, family, style):
                      font="{family_safe}:style={style_safe}", 
                      halign="center", 
                      valign="baseline");
+    fnt = fontmetrics({FONT_SIZE_MM}, "{family_safe}:style={style_safe}");
     union() {{
         // Base Block
-        translate([- (met.size.x + (2 * {SIDE_PADDING}))/2, -{block_depth}/2, 0])
-            cube([(met.size.x + (2 * {SIDE_PADDING})), {block_depth}, {BASE_HEIGHT}]);
+        translate([- (max(met.advance.x, met.size.x))/2 - {RIGHT_SAFETY}, (-(fnt.max.ascent-fnt.max.descent)/2)-{MARGIN_BOTTOM}, 0])
+            cube([({RIGHT_SAFETY} + max(met.advance.x, met.size.x)) + {LEFT_SAFETY}, {MARGIN_BOTTOM} + (fnt.max.ascent-fnt.max.descent)+{TOP_SAFETY}+{MARGIN_TOP}, {BASE_HEIGHT}]);
             
         // Letter
-        // baseline_y_pos is where the baseline sits relative to the CENTER (0,0)
-        translate([0, {baseline_y_pos}, {BASE_HEIGHT}])
+        translate([0, fnt.max.descent, {BASE_HEIGHT}])
             mirror([1, 0, 0]) 
             linear_extrude({RELIEF_HEIGHT})
                 text("{char}", 
@@ -104,18 +81,61 @@ def generate_scad_string(char, block_depth, baseline_y_pos, family, style):
                      valign="baseline");
     }}
     """
+    
+    return scad_code
+
+def generate_handle_scad(family, style):
+    family_safe = family.replace('"', '\\"').replace('-', '\\\\-')
+    style_safe = style.replace('"', '\\"').replace('-', '\\\\-')
+
+    scad_code = f"""
+    $fn = 60;
+    fnt = fontmetrics({FONT_SIZE_MM}, "{family_safe}:style={style_safe}");
+    stamp_h = (fnt.max.ascent - fnt.max.descent) + {TOP_SAFETY} + {MARGIN_BOTTOM} + {MARGIN_TOP};
+    
+    // Handle Parameters
+    h_len = {HANDLE_LENGTH};
+    tol = {HANDLE_TOLERANCE};
+    wall = {HANDLE_WALL};
+    lip = {HANDLE_LIP};
+    lip_thick = 1;
+    base_thick = {HANDLE_BASE_THICKNESS};
+    stamp_base_z = {BASE_HEIGHT};
+    slide_relief = base_thick/8;
+
+    // Derived Dimensions
+    slot_width_y = stamp_h + tol;
+    slot_depth_z = stamp_base_z + tol;
+    
+    outer_width_y = slot_width_y + 2*wall;
+    outer_height_z = slot_depth_z + base_thick + tol + lip_thick;
+
+    difference() {{
+        // 1. The Main Handle Body
+        translate([0, 0, 0])
+            cube([h_len + wall, outer_width_y, outer_height_z]);
+
+        // 2. The Slot Channel (Horizontal Cut)
+        translate([-1, wall, base_thick]) 
+            cube([h_len - wall + 1, slot_width_y, slot_depth_z]);
+
+        // 3. The Top Opening (Vertical Cut through the rails) + relief for easy sliding
+        // We leave 'lip' material on the sides to hold the stamp
+        translate([-1, wall + lip, base_thick - slide_relief])
+            cube([h_len - wall + 1, slot_width_y - 2*lip, outer_height_z]);
+    }}
+    """
     return scad_code
 
 def main():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    # 1. Font Setup
     font_files = glob.glob("*.ttf") + glob.glob("*.otf")
     if not font_files:
         print("Error: No .ttf or .otf files found.")
         return
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"#font_files[0]
+    font_path = font_files[0]
     
     try:
         family_name, style_name = get_font_info(font_path)
@@ -124,45 +144,16 @@ def main():
         print(f"Error reading font metadata: {e}")
         return
 
-    # 2. METRIC CALCULATION
-    # We use the font's Global Design Metrics now.
-    # This guarantees the block is tall enough for ANY character in the set.
-    design_ascent, design_descent = get_font_design_metrics(font_path)
-    
-    print(f"Font Metrics (Design): Ascent={design_ascent:.2f}mm, Descent={design_descent:.2f}mm")
-
-    # Height needed for the text itself
-    text_height_needed = design_ascent + design_descent
-    
-    # Total Block Height needed (Text + Top Margin + Bottom Margin)
-    total_depth_needed = text_height_needed + MARGIN_TOP + MARGIN_BOTTOM
-    
-    # Set final depth
-    final_block_depth = max(MIN_BLOCK_DEPTH, total_depth_needed)
-    
-    print(f"Block Height calculated: {final_block_depth:.2f}mm")
-
-    # 3. Calculate Baseline Position
-    # OpenSCAD Y=0 is the center of the block.
-    # The TOP edge of the block is at Y = final_block_depth / 2
-    # We want the highest point of the font (Ascent) to be 'MARGIN_TOP' away from the edge.
-    # So: Baseline_Y + Ascent = Top_Edge - Margin_Top
-    # Baseline_Y = (Top_Edge - Margin_Top) - Ascent
-    
-    block_top_edge = final_block_depth / 2
-    baseline_y_pos = (block_top_edge - MARGIN_TOP) - design_ascent
-
-    print(f"Baseline Offset: {baseline_y_pos:.2f}mm (from center)")
     print(f"Generating stamps...")
 
     for char in CHARS_TO_GENERATE:
-        scad_content = generate_scad_string(char, final_block_depth, baseline_y_pos, family_name, style_name)
+        scad_content = generate_scad_string(char, family_name, style_name)
         
         safe_char_name = char
         if not safe_char_name.isalnum(): safe_char_name = f"symbol_{ord(char)}"
         
         stl_filename = os.path.join(OUTPUT_DIR, f"{safe_char_name}.stl")
-        scad_filename = os.path.join(OUTPUT_DIR, f"{safe_char_name}.scad")
+        scad_filename = os.path.join(OUTPUT_DIR, "temp.scad") # set this to f"{safe_char_name}.scad" to view generated scad code
         
         with open(scad_filename, "w") as f:
             f.write(scad_content)
@@ -178,6 +169,27 @@ def main():
             )
         except subprocess.CalledProcessError:
             print(f"Error: OpenSCAD failed on '{char}'.")
+
+    # --- Generate Handle ---
+    if GENERATE_HANDLE:
+        print(f"Generating Handle...")
+        handle_scad = generate_handle_scad(family_name, style_name)
+        handle_stl = os.path.join(OUTPUT_DIR, "handle.stl")
+        handle_scad_file = os.path.join(OUTPUT_DIR, "handle_temp.scad")
+        
+        with open(handle_scad_file, "w") as f:
+            f.write(handle_scad)
+            
+        try:
+            subprocess.run(
+                [OPENSCAD_EXEC, "--enable", "textmetrics", "-o", handle_stl, handle_scad_file],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            print("  Handle generated successfully.")
+        except subprocess.CalledProcessError:
+            print("  Error: OpenSCAD failed on handle.")
+        
+        if os.path.exists(handle_scad_file): os.remove(handle_scad_file)
 
     if os.path.exists(os.path.join(OUTPUT_DIR, "temp.scad")):
         os.remove(os.path.join(OUTPUT_DIR, "temp.scad"))
