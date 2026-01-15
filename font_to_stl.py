@@ -61,19 +61,17 @@ def get_font_design_metrics(font_path):
     # getmetrics returns (ascent, descent) in pixels for the entire font
     # ascent is distance from baseline to top-most ink
     # descent is distance from baseline to bottom-most ink
-    #ascent_px, descent_px = font.getmetrics()
-
-    _, top, _, bottom = font.getbbox(CHARS_TO_GENERATE, anchor="ls")
+    ascent_px, descent_px = font.getmetrics()
     
     # Calculate scale factor
     scale_factor = FONT_SIZE_MM / dummy_size
     
     # We add a small safety buffer (10%) because OpenSCAD and PIL 
     # handle rounding slightly differently.
-    safety_buffer = 1#.10
+    safety_buffer = 1.10
     
-    abs_ascent_mm = (-top * scale_factor) * safety_buffer
-    abs_descent_mm = (-bottom * scale_factor) * safety_buffer
+    abs_ascent_mm = (ascent_px * scale_factor) * safety_buffer
+    abs_descent_mm = (descent_px * scale_factor) * safety_buffer
     
     return abs_ascent_mm, abs_descent_mm
 
