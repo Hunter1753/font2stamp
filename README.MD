@@ -16,3 +16,6 @@ podman build -t stamp-generator
 ```bash
 podman run --rm -v "$(pwd):/app" stamp-generator
 ```
+
+### Methodology and AI Assistance
+This program was written by hand. Large Language Models (specifically Gemini) were used during the ideation phase and to provide example code snippets for openscad. All AI-generated suggestions were reviewed, modified, and implemented by the author.
